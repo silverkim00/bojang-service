@@ -1,0 +1,44 @@
+steps:
+  # 1) 프론트 Docker 이미지 빌드
+  - name: gcr.io/cloud-builders/docker
+    id: Frontend 이미지 빌드
+    args:
+      [
+        "build",
+        "-f",
+        "Dockerfile.frontend",
+        "-t",
+        "asia-northeast3-docker.pkg.dev/$PROJECT_ID/bojang-repo/bojang-frontend:$BUILD_ID",
+        ".",
+      ]
+
+  # 2) 이미지 푸시
+  - name: gcr.io/cloud-builders/docker
+    id: Frontend 이미지 푸시
+    args:
+      [
+        "push",
+        "asia-northeast3-docker.pkg.dev/$PROJECT_ID/bojang-repo/bojang-frontend:$BUILD_ID",
+      ]
+
+  # 3) Cloud Run 배포 (새 서비스 bojang-frontend)
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: Frontend Cloud Run 배포
+    entrypoint: gcloud
+    args:
+      [
+        "run",
+        "deploy",
+        "bojang-frontend",
+        "--image=asia-northeast3-docker.pkg.dev/$PROJECT_ID/bojang-repo/bojang-frontend:$BUILD_ID",
+        "--region=asia-northeast3",
+        "--platform=managed",
+        "--allow-unauthenticated",
+        "--port=80",
+      ]
+
+images:
+  - asia-northeast3-docker.pkg.dev/$PROJECT_ID/bojang-repo/bojang-frontend:$BUILD_ID
+
+options:
+  logging: CLOUD_LOGGING_ONLY
