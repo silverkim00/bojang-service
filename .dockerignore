@@ -1,0 +1,49 @@
+# VCS / tooling
+.git/
+.gitattributes
+.github/
+.gcloudignore
+
+# Python
+venv/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs / temp / artifacts
+tmp/
+*.log
+*.zip
+*.tar
+*.gz
+*.xlsx
+
+# Frontend caches
+node_modules/
+bojang-frontend/node_modules/
+bojang-frontend/.vite/
+bojang-frontend/.cache/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Local env files (런타임엔 시크릿/환경변수로 주입)
+.env
+.env.*
+
+# (주의) 앱 모듈 logs/ 는 무시하지 않음
+# → 디렉터리 전체를 제외하는 'logs/' 규칙을 절대 넣지 말 것
+#    위의 *.log 규칙만으로 로그파일은 자동 제외됨
+
+# 템플릿은 빌드에 필요하니 포함 유지
+!pdf_xlsx/static/templates/
+!pdf_xlsx/static/templates/base_template.xlsx
+!pdf_xlsx/static/templates/base_template2.xlsx
+!logs/
+!logs/__init__.py
+!logs/models.py

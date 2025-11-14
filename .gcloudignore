@@ -1,0 +1,48 @@
+# VCS / tooling
+.git/
+.gitattributes
+.github/
+.gcloudignore
+
+# Python
+venv/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs / temp / artifacts
+tmp/
+*.log
+*.zip
+*.tar
+*.gz
+*.xlsx
+
+# Frontend caches
+node_modules/
+bojang-frontend/node_modules/
+bojang-frontend/.vite/
+bojang-frontend/.cache/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Local env files
+.env
+.env.*
+
+# (주의) 앱 모듈 logs/ 는 무시하지 않음
+# → 'logs/' 같은 디렉터리 제외 규칙 넣지 말 것
+
+# 템플릿 allowlist
+!pdf_xlsx/static/templates/
+!pdf_xlsx/static/templates/base_template.xlsx
+!pdf_xlsx/static/templates/base_template2.xlsx
+!logs/
+!logs/__init__.py
+!logs/models.py

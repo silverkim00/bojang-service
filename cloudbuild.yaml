@@ -1,0 +1,67 @@
+steps:
+# 1. Docker 이미지 빌드 (수정 없음)
+- name: gcr.io/cloud-builders/docker
+  id: Docker 이미지 빌드
+  args: ['build','--no-cache','-t','asia-northeast3-docker.pkg.dev/$PROJECT_ID/bojang-repo/bojang-service:$BUILD_ID','.']
+
+# 2. Docker 이미지 푸시 (수정 없음)
+- name: gcr.io/cloud-builders/docker
+  id: Docker 이미지 푸시
+  args: ['push','asia-northeast3-docker.pkg.dev/$PROJECT_ID/bojang-repo/bojang-service:$BUILD_ID']
+
+# 3. 마이그레이션 Job 업데이트 (update 유지)
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 마이그레이션 Job 업데이트
+  entrypoint: gcloud
+  args:
+    - run
+    - jobs
+    - update
+    - bojang-migrate
+    - --region=asia-northeast3
+    - --image=asia-northeast3-docker.pkg.dev/$PROJECT_ID/bojang-repo/bojang-service:$BUILD_ID
+    - --command=python
+    - '--args=manage.py'
+    - '--args=migrate'
+    - '--args=--noinput'
+    - '--update-env-vars=PYTHONUNBUFFERED=1,DJANGO_SETTINGS_MODULE=bojang_api.settings,DB_HOST=/cloudsql/elegant-shelter-430609-r2:asia-northeast3:bojang,DB_PORT=5432'
+    - '--set-secrets=DB_NAME=DB_NAME:latest,DB_USER=DB_USER:latest,DB_PASSWORD=DB_PASSWORD:latest'
+    - '--set-cloudsql-instances=elegant-shelter-430609-r2:asia-northeast3:bojang'
+
+# 4. 마이그레이션 Job 실행 (수정 없음)
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 마이그레이션 Job 실행
+  entrypoint: gcloud
+  args:
+    - run
+    - jobs
+    - execute
+    - bojang-migrate
+    - --region=asia-northeast3
+    - --wait
+
+# --- ★★★ Step #5 ~ #8 (loaddata 관련 4개 단계) 모두 삭제 ★★★ ---
+
+# 5. (기존 9번) 메인 서비스 배포 (수정 없음)
+- name: gcr.io/google.com/cloudsdktool/cloud-sdk
+  id: Cloud Run 배포
+  entrypoint: gcloud
+  args:
+    - run
+    - deploy
+    - bojang-service
+    - --image=asia-northeast3-docker.pkg.dev/$PROJECT_ID/bojang-repo/bojang-service:$BUILD_ID
+    - --region=asia-northeast3
+    - --platform=managed
+    - --quiet
+    - --set-cloudsql-instances=elegant-shelter-430609-r2:asia-northeast3:bojang
+    - "--set-env-vars=PYTHONUNBUFFERED=1,DJANGO_SETTINGS_MODULE=bojang_api.settings,DJANGO_DEBUG=False,DB_HOST=/cloudsql/elegant-shelter-430609-r2:asia-northeast3:bojang,DB_PORT=5432,EMAIL_HOST_USER=killaa0522@gmail.com,DEFAULT_FROM_EMAIL=\uBCF4\uC7A5\uBD84\uC11D\u003ckillaa0522@gmail.com\u003e"
+    - --set-secrets=DJANGO_SECRET_KEY=django_secret_key:latest,JWT_SECRET=jwt_secret:latest,DB_NAME=DB_NAME:latest,DB_USER=DB_USER:latest,DB_PASSWORD=DB_PASSWORD:latest,DB_INSTANCE=db_instance:latest,EMAIL_HOST_PASSWORD=email_host_password:latest
+    - --allow-unauthenticated
+
+# 이미지 및 로깅 옵션 (수정 없음)
+images:
+- asia-northeast3-docker.pkg.dev/$PROJECT_ID/bojang-repo/bojang-service:$BUILD_ID
+
+options:
+  logging: CLOUD_LOGGING_ONLY
