@@ -1,4 +1,3 @@
-# bojang_api/urls.py
 from django.contrib import admin
 from django.urls import path, re_path
 from django.http import JsonResponse
@@ -12,12 +11,15 @@ from .views import (
     NoticeUpdateView,
 )
 
+
 def healthz(_):
     return JsonResponse({"status": "ok"})
+
 
 def spa_fallback(_):
     # 루트 / 기타 경로로 들어오면 간단한 안내만
     return JsonResponse({"service": "bojang-service", "status": "ok"})
+
 
 urlpatterns = [
     # 기본
@@ -46,6 +48,14 @@ urlpatterns = [
     path("api/management/users", management_views.UserListView.as_view(), name="mgmt-user-list"),
     path("api/management/users/<int:user_id>/activate", management_views.UserActivationView.as_view(), name="mgmt-user-activate"),
     path("api/management/users/<int:user_id>/logs", management_views.UserLoginLogView.as_view(), name="mgmt-user-logs"),
+
+    # 🔥 빠져 있던 대시보드 통계 라우트
+    path(
+        "api/management/dashboard-stats",
+        management_views.DashboardStatsView.as_view(),
+        name="mgmt-dashboard-stats",
+    ),
+
     path("api/management/processed-pdfs", management_views.ProcessedPDFListView.as_view(), name="mgmt-pdf-list"),
     path("api/management/processed-pdfs/<int:pdf_id>/details", management_views.ProcessedPDFDetailView.as_view(), name="mgmt-pdf-detail"),
     path("api/management/processed-pdfs/<int:pdf_id>/download", management_views.ProcessedPDFDownloadView.as_view(), name="mgmt-pdf-download"),
@@ -59,5 +69,5 @@ urlpatterns = [
     path("api/me", MeView.as_view(), name="api-me"),
 
     # SPA 라우팅 대신 JSON 응답 (항상 마지막)
-    re_path(r'^(?!api/|admin/).*$', spa_fallback),
+    re_path(r"^(?!api/|admin/).*$", spa_fallback),
 ]

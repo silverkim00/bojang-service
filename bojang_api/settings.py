@@ -9,9 +9,8 @@ IS_CLOUD_RUN = bool(
     or os.getenv("CLOUD_RUN_JOB")   # Cloud Run Job에 자동 세팅됨
     or os.getenv("JOB_NAME")        # (일부 환경에서 세팅)
 )
-DEBUG = os.getenv("DJANGO_DEBUG", "false").lower() == "true"  # 운영 기본 false 권장
 
-# ── 2) .env (로컬에서만)
+# ── 2) .env (로컬에서만 먼저 로드)
 try:
     from dotenv import load_dotenv
     if not IS_CLOUD_RUN:
@@ -19,7 +18,10 @@ try:
 except ImportError:
     pass
 
-# ── 3) 업로드 가드
+# ── 3) 디버그 플래그 (.env 로드 후 계산)
+DEBUG = os.getenv("DJANGO_DEBUG", "false").lower() == "true"  # 운영 기본 false 권장
+
+# ── 4) 업로드 가드
 MAX_FILES_PER_REQ = int(os.getenv("MAX_FILES_PER_REQ", "10"))
 MAX_FILE_BYTES    = int(os.getenv("MAX_FILE_BYTES", str(50 * 1024 * 1024)))  # 50MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = MAX_FILE_BYTES
@@ -29,16 +31,17 @@ FILE_UPLOAD_TEMP_DIR = "/tmp"
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-default-dev-key")
 
-# ── 4) 유틸
+# ── 5) 유틸
 def _env_list(key: str, default: str = "") -> list[str]:
     v = os.getenv(key, default)
     seen, out = set(), []
     for s in (x.strip() for x in v.split(",") if x.strip()):
         if s not in seen:
-            seen.add(s); out.append(s)
+            seen.add(s)
+            out.append(s)
     return out
 
-# ── 5) 호스트/CORS/CSRF
+# ── 6) 호스트/CORS/CSRF
 ALLOWED_HOSTS = _env_list("ALLOWED_HOSTS", "*")
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
@@ -46,20 +49,32 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 PROD_URL = "https://bojang-service-98909072626.asia-northeast3.run.app"
 FRONTEND_URL = os.getenv("FRONTEND_URL", PROD_URL)
 
-CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS", f"{PROD_URL},https://storage.googleapis.com")
+CSRF_TRUSTED_ORIGINS = _env_list(
+    "CSRF_TRUSTED_ORIGINS",
+    f"{PROD_URL},https://storage.googleapis.com",
+)
+
+# 기본 CORS: 환경변수 기반 (Cloud Run에서 사용)
 CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS", PROD_URL)
 CORS_EXPOSE_HEADERS = ["Content-Disposition"]
 CORS_ALLOW_CREDENTIALS = True
 
-if DEBUG:
-    # 로컬 개발 도메인 확실히 허용
-    CORS_ALLOWED_ORIGINS = sorted(list(set(CORS_ALLOWED_ORIGINS + ["http://localhost:5173", "http://127.0.0.1:5173"])))
+# 🔥 로컬 개발 환경(Cloud Run 아님)에서는 무조건 localhost 프론트 허용
+if not IS_CLOUD_RUN:
+    extra = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    CORS_ALLOWED_ORIGINS = sorted(list(set(CORS_ALLOWED_ORIGINS + extra)))
 
-# ── 6) 앱
+# ── 7) 앱
 INSTALLED_APPS = [
-    "django.contrib.admin","django.contrib.auth","django.contrib.contenttypes",
-    "django.contrib.sessions","django.contrib.messages","django.contrib.staticfiles",
-    "rest_framework","corsheaders","storages",
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "rest_framework",
+    "corsheaders",
+    "storages",
     "bojang_api",
     "records",
     "pdf_xlsx",
@@ -69,7 +84,7 @@ INSTALLED_APPS = [
 if DEBUG:
     INSTALLED_APPS.append("django_extensions")
 
-# ── 7) 미들웨어
+# ── 8) 미들웨어
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "corsheaders.middleware.CorsMiddleware",  # ← CommonMiddleware 위
@@ -82,22 +97,25 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-# ── 8) URL/템플릿/WSGI
+# ── 9) URL/템플릿/WSGI
 ROOT_URLCONF = "bojang_api.urls"
 TEMPLATES = [{
-    "BACKEND":"django.template.backends.django.DjangoTemplates",
-    "DIRS":[os.path.join(BASE_DIR,'bojang-frontend','dist')],
-    "APP_DIRS":True,
-    "OPTIONS":{"context_processors":[
-        "django.template.context_processors.debug",
-        "django.template.context_processors.request",
-        "django.contrib.auth.context_processors.auth",
-        "django.contrib.messages.context_processors.messages",
-    ]},
+    "BACKEND": "django.template.backends.django.DjangoTemplates",
+    # bojang-frontend/dist 를 템플릿/정적 루트로 사용 (프론트 빌드 결과)
+    "DIRS": [os.path.join(BASE_DIR, "bojang-frontend", "dist")],
+    "APP_DIRS": True,
+    "OPTIONS": {
+        "context_processors": [
+            "django.template.context_processors.debug",
+            "django.template.context_processors.request",
+            "django.contrib.auth.context_processors.auth",
+            "django.contrib.messages.context_processors.messages",
+        ]
+    },
 }]
 WSGI_APPLICATION = "bojang_api.wsgi.application"
 
-# ── 9) 데이터베이스 (Cloud Run/잡: 시크릿 또는 ENV를 통해 주입)
+# ── 10) 데이터베이스 (Cloud Run/Job: 시크릿 또는 ENV를 통해 주입)
 if os.getenv("DB_NAME"):
     _DB_NAME = os.getenv("DB_NAME")
     _DB_USER = os.getenv("DB_USER")
@@ -144,33 +162,69 @@ if os.getenv("DB_NAME"):
             }
         }
     else:
-        DATABASES = {"default": {"ENGINE":"django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}}
+        DATABASES = {
+            "default": {
+                "ENGINE": "django.db.backends.sqlite3",
+                "NAME": BASE_DIR / "db.sqlite3",
+            }
+        }
 else:
-    DATABASES = {"default": {"ENGINE":"django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}}
+    # 로컬/기본: sqlite
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
-# ── 10) i18n
+# ── 11) i18n
 LANGUAGE_CODE = "ko-kr"
 TIME_ZONE = "Asia/Seoul"
 USE_I18N = True
 USE_TZ = True
 
-# ── 11) 정적/스토리지
+# ── 12) 정적/스토리지
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_DIRS = [os.path.join(BASE_DIR,'bojang-frontend','dist')]
+# Vite 빌드 결과(dist)를 정적 디렉토리로 사용
+STATICFILES_DIRS = [os.path.join(BASE_DIR, "bojang-frontend", "dist")]
 
 GS_BUCKET_NAME = "bojang-static-files-elegant-shelter"
 GS_DEFAULT_ACL = None
-STORAGES = {
-    "default": {"BACKEND": "storages.backends.gcloud.GoogleCloudStorage"},
-    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
-}
+
+if IS_CLOUD_RUN:
+    # 🔥 Cloud Run / 운영: GCS 스토리지 사용
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.gcloud.GoogleCloudStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        },
+    }
+else:
+    # 🔥 로컬 개발: 로컬 디스크에 저장
+    MEDIA_ROOT = BASE_DIR / "media"
+    MEDIA_URL = "/media/"
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        },
+    }
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# ── 12) DRF/JWT
+# ── 13) DRF/JWT
 REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework_simplejwt.authentication.JWTAuthentication"],
-    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication"
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.AllowAny"
+    ],
 }
 _access_hours = int(os.getenv("JWT_EXPIRES_HOURS", "12"))
 _jwt_signing_key = os.getenv("JWT_SECRET") or SECRET_KEY
@@ -181,7 +235,7 @@ SIMPLE_JWT = {
     "SIGNING_KEY": _jwt_signing_key,
 }
 
-# ── 13) 운영 보안
+# ── 14) 운영 보안
 if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
@@ -189,7 +243,7 @@ if not DEBUG:
     X_FRAME_OPTIONS = "DENY"
     SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
 
-# ── 14) 로깅
+# ── 15) 로깅
 LOG_LEVEL = os.getenv("DJANGO_LOG_LEVEL", "INFO")
 
 # 기본은 콘솔만. 파일 로깅은 명시적으로 LOG_TO_FILE=1 일 때만 켬.
@@ -198,14 +252,22 @@ USE_FILE_LOG = os.getenv("LOG_TO_FILE", "0") == "1"
 _RUN_MAIN = os.environ.get("RUN_MAIN") == "true"
 _IS_WINDOWS = (os.name == "nt")
 
+
 def _console_only_logging():
     return {
         "version": 1,
         "disable_existing_loggers": False,
         "handlers": {"console": {"class": "logging.StreamHandler"}},
         "root": {"handlers": ["console"], "level": LOG_LEVEL},
-        "loggers": {"django": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False}},
+        "loggers": {
+            "django": {
+                "handlers": ["console"],
+                "level": LOG_LEVEL,
+                "propagate": False,
+            }
+        },
     }
+
 
 if IS_CLOUD_RUN:
     # Cloud Run/Jobs → 콘솔만
@@ -222,26 +284,42 @@ else:
         except Exception:
             pass
         LOGGING = {
-            "version": 1, "disable_existing_loggers": False,
+            "version": 1,
+            "disable_existing_loggers": False,
             "formatters": {
-                "verbose": {"format": "[%(asctime)s] %(levelname)s - %(name)s - %(message)s"},
+                "verbose": {
+                    "format": "[%(asctime)s] %(levelname)s - %(name)s - %(message)s"
+                },
                 "simple": {"format": "[%(asctime)s] %(levelname)s - %(message)s"},
             },
             "handlers": {
-                "console": {"class":"logging.StreamHandler","formatter":"simple","level":LOG_LEVEL},
+                "console": {
+                    "class": "logging.StreamHandler",
+                    "formatter": "simple",
+                    "level": LOG_LEVEL,
+                },
                 "file": {
-                    "class":"logging.handlers.TimedRotatingFileHandler",
+                    "class": "logging.handlers.TimedRotatingFileHandler",
                     "filename": str(LOG_DIR / "debug.log"),
-                    "when":"midnight","backupCount":7,"encoding":"utf-8",
-                    "level":LOG_LEVEL,"formatter":"verbose",
+                    "when": "midnight",
+                    "backupCount": 7,
+                    "encoding": "utf-8",
+                    "level": LOG_LEVEL,
+                    "formatter": "verbose",
                     "delay": True,  # 파일 오픈 지연 → 잠김/권한 이슈 완화
                 },
             },
-            "root": {"handlers": ["console","file"], "level": LOG_LEVEL},
-            "loggers": {"django": {"handlers": ["console","file"], "level": LOG_LEVEL, "propagate": False}},
+            "root": {"handlers": ["console", "file"], "level": LOG_LEVEL},
+            "loggers": {
+                "django": {
+                    "handlers": ["console", "file"],
+                    "level": LOG_LEVEL,
+                    "propagate": False,
+                }
+            },
         }
 
-# ── 15) 이메일
+# ── 16) 이메일
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.gmail.com"
 EMAIL_PORT = 465
@@ -249,5 +327,8 @@ EMAIL_USE_SSL = True
 EMAIL_USE_TLS = False
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", f"보장분석 <{EMAIL_HOST_USER}>")
+DEFAULT_FROM_EMAIL = os.getenv(
+    "DEFAULT_FROM_EMAIL",
+    f"보장분석 <{EMAIL_HOST_USER}>",
+)
 EMAIL_TIMEOUT = 30

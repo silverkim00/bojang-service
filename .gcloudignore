@@ -46,3 +46,4 @@ Thumbs.db
 !logs/
 !logs/__init__.py
 !logs/models.py
+!bojang-frontend/.env.production

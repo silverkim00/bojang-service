@@ -276,23 +276,34 @@ def _exclude_reason(name: str, assoc: str) -> tuple[bool, str | None]:
     로컬 제외 규칙(정규화 이전 문자열 포함 검사):
       - 교통상해사망: 무조건 제외(EXC/TRAFFIC_DEATH)
       - 산정특례 진단/특정상해후유장해: 제외
+      - 특정질병/특정상해 입원일당: 제외(EXC/SPEC_DISEASE_HOSP)
+      - '단독' 특정질병수술(패키지/종수 패턴 없는 경우): 제외(EXC/SPEC_DISEASE_SURG_SOLO)
       - 운전자/배상/벌금/실손·암치료 도메인: 통과
       - 강제 제외 키/전역 EXCLUSION(수술 도메인 제외 시): 제외
       - 사망/후유장해 자체는 통과(별도 훅이 처리)
     """
     raw = (name or "") + (assoc or "")
+
+    # 0) 교통상해 사망
     if TRAFFIC_DEATH_RX.search(raw):
         return True, "EXC/TRAFFIC_DEATH"
 
     s = _nosp(raw)
 
+    # >>> NEW 1) 특정질병/특정상해 입원일당 → 입구에서 바로 컷
+    #     예: "특정질병입원일당", "특정상해입원일당"
+    if "특정질병입원일당" in s or "특정상해입원일당" in s:
+        return True, "EXC/SPEC_DISEASE_HOSP"
+
     has_surgery_domain = ("수술" in s) or any(k in s for k in SURGERY_TOKENS)
 
+    # 기존 특례/후유장해 컷
     if "특정상해후유장해" in s:
         return True, "EXC/SPECIFIC_INJURY_IMPAIRMENT"
     if ("산정특례" in s) and (("진단" in s) or ("진단비" in s)):
         return True, "EXC/SANJEONGTOKRYE_DIAG"
 
+    # 교통사고처리지원금은 그대로 통과
     if "교통사고처리지원금" in s:
         return False, None
 
@@ -305,38 +316,72 @@ def _exclude_reason(name: str, assoc: str) -> tuple[bool, str | None]:
     ):
         return False, None
 
+    # 특정순환계질환 통합치료류는 통과
     if any(k in s for k in ("특정순환계질환","순환계질환","순환계")) and any(k in s for k in ("치료","치료비","통합치료")):
         return False, None
 
+    # 운전자/배상/벌금/변호사/자동차부상 영역은 통과
     if any(k in s for k in ("일상생활배상책임","가족생활배상책임","가족일상생활배상책임","일배","가배책",
                              "교통사고처리","형사합의","변호사선임","방어비용","벌금","화재벌금","자동차사고부상","자동차부상")):
         return False, None
 
-    if any(k in s for k in ("의료비","입원의료비","통원의료비","비급여mri","mri검사","mri","주사제","비급여주사","도수","체외충격파","증식치료")):
+    # 실손/의료비 계열은 통과
+    if any(k in s for k in ("의료비","입원의료비","통원의료비","비급여mri","mri검사","mri",
+                             "주사제","비급여주사","도수","체외충격파","증식치료")):
         return False, None
 
+    # 강제 EXC 키
     if any(k in s for k in _FORCE_EXC_KEYS):
         k = next(k for k in _FORCE_EXC_KEYS if k in s)
         return True, f"EXC/RULE:{k}"
 
+    # >>> NEW 2) '단독' 특정질병수술 컷
+    #     - "특정질병수술"은 포함
+    #     - 2대/5대/N대/종수술/대수술 같은 패키지 키워드 없음
+    #     - "1~5종수술", "3종수술" 같은 숫자+종+수술 패턴 없음
+    #
+    #     예)
+    #       무원터치의료보장1.2(1종) | 특정질병수술 | 1,000만 → 컷
+    #       질병1~5종수술(특정질병수술 포함) → 종수술 패턴 때문에 살려둠
+    if "특정질병수술" in s:
+        pkg_tokens = (
+            "2대수술","3대수술","4대수술","5대수술",
+            "n대수술","N대수술","종수술","대수술",
+        )
+        has_pkg_keyword = any(tok in s for tok in pkg_tokens)
+
+        # 숫자+종+수술 패턴 (1종수술, 1~5종수술 등)
+        has_gkind_surg = bool(
+            re.search(r"\d+\s*(?:[~\-]\s*\d+)?\s*종\s*수술", s)
+        )
+
+        if not has_pkg_keyword and not has_gkind_surg:
+            return True, "EXC/SPEC_DISEASE_SURG_SOLO"
+
+    # G5(종수술 종수 명시)는 웬만하면 컷하지 말고 도메인으로 보냄
     if RX_G5_NUM.search(s):
         return False, None
 
+    # 수술 도메인이 아니면 BASE_EXC_KEYS 적용
     if not has_surgery_domain:
         for k in _BASE_EXC_KEYS:
             if k.replace(" ", "") in s:
                 return True, f"EXC/KEY:{k}"
 
+    # 교통 후유장해는 컷
     if ("교통" in s) and ("후유장해" in s):
         return True, "EXC/KEY:교통후유장해"
 
+    # 사망/후유장해는 도메인에서 따로 처리
     if ("사망" in s) or ("후유장해" in s):
         return False, None
 
+    # 장기요양/재가/시설급여 쪽은 통과 (요양 도메인)
     if any(k in s for k in CARE_TOKENS):
         return False, None
 
     return False, None
+
 
 # ============================================================
 # [섹션 E] 라벨/별칭/정규식
