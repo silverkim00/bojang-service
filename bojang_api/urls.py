@@ -1,6 +1,8 @@
+# bojang_api/urls.py
 from django.contrib import admin
 from django.urls import path, re_path
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponseRedirect
+from django.conf import settings
 
 from . import views
 from . import management_views
@@ -16,9 +18,18 @@ def healthz(_):
     return JsonResponse({"status": "ok"})
 
 
-def spa_fallback(_):
-    # 루트 / 기타 경로로 들어오면 간단한 안내만
-    return JsonResponse({"service": "bojang-service", "status": "ok"})
+def spa_fallback(request):
+    """
+    /, /foo 같은 비-API 경로로 들어온 브라우저를
+    프론트엔드 서비스로 리다이렉트.
+    /api/, /admin/은 기존처럼 백엔드가 처리.
+    """
+    target = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+    if not target:
+        # FRONTEND_URL 이 없으면 예전처럼 JSON만 응답
+        return JsonResponse({"service": "bojang-service", "status": "ok"})
+
+    return HttpResponseRedirect(target + "/")
 
 
 urlpatterns = [
@@ -49,7 +60,7 @@ urlpatterns = [
     path("api/management/users/<int:user_id>/activate", management_views.UserActivationView.as_view(), name="mgmt-user-activate"),
     path("api/management/users/<int:user_id>/logs", management_views.UserLoginLogView.as_view(), name="mgmt-user-logs"),
 
-    # 🔥 빠져 있던 대시보드 통계 라우트
+    # 대시보드 통계
     path(
         "api/management/dashboard-stats",
         management_views.DashboardStatsView.as_view(),
@@ -68,6 +79,6 @@ urlpatterns = [
     # 사용자 정보
     path("api/me", MeView.as_view(), name="api-me"),
 
-    # SPA 라우팅 대신 JSON 응답 (항상 마지막)
+    # SPA 라우팅: /api, /admin 이 아닌 모든 경로는 프론트로 리다이렉트 (항상 마지막)
     re_path(r"^(?!api/|admin/).*$", spa_fallback),
 ]
