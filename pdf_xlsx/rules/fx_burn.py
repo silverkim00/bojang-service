@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import Dict, List, Optional
 
-from .. import config
+from ..import config
 from ..utils import _nz, _nosp, parse_amount, format_amount_short
 
 # ────────────────────────── 유틸
@@ -35,17 +35,9 @@ LBL_FX_DIAG = "골절,화상 진단비"
 LBL_FX_SURG = "골절,화상 수술비"
 LBL_LIAB_1  = "일상생활배상책임"
 LBL_LIAB_2  = "가족생활배상책임"
+LBL_LIAB_3  = "자녀일상생활배상책임"
 LBL_FFINE   = "화재벌금"
 
-# 가배책 출력은 단일 문자열 키에만 기록(튜플 금지)
-def _pick_liab_target_row() -> str:
-    row_map = getattr(config, "HARDCODED_ROW_MAP", {}) or {}
-    if LBL_LIAB_2 in row_map:
-        return LBL_LIAB_2
-    if LBL_LIAB_1 in row_map:
-        return LBL_LIAB_1
-    # 둘 다 없으면 일단 기본으로 일상 배상에 넣는다(표 없을 때라도 한 줄 보존)
-    return LBL_LIAB_1
 
 # 5대골절/중대화상 등 “버려야 할” 키워드(진단/수술 공통 가드)
 _EXC_TOKENS_LOCAL = (
@@ -144,48 +136,61 @@ def aggregate(bucket: Dict[str, List[Dict]], out: Dict[str, str]) -> None:
         if parts:
             out[LBL_FX_SURG] = ", ".join(parts)
 
-    # ── 3) 생활배상(일상/가족/자녀) 분리 병기 ───────────────────────
-    def _pick_liab_rows() -> tuple[str, Optional[str]]:
-        row_map = getattr(config, "HARDCODED_ROW_MAP", {}) or {}
-        # 기본 우선순위: 가족배상 → 일상배상
-        first = LBL_LIAB_2 if LBL_LIAB_2 in row_map else LBL_LIAB_1
-        second = None
-        if (LBL_LIAB_2 in row_map) and (LBL_LIAB_1 in row_map):
-            second = LBL_LIAB_1 if first == LBL_LIAB_2 else LBL_LIAB_2
-        return first, second
+    # ── 3) 생활배상(일상/가족/자녀) 병기 ─────────────────────────────
+    row_map = getattr(config, "HARDCODED_ROW_MAP", {}) or {}
 
-    liab_items_general: List[Dict] = []
-    liab_items_child: List[Dict] = []
+    # 버킷별 최대 금액
+    v_personal = _max_amt(bucket.get(LBL_LIAB_1, [])) if LBL_LIAB_1 in bucket else 0  # 일상
+    v_family   = _max_amt(bucket.get(LBL_LIAB_2, [])) if LBL_LIAB_2 in bucket else 0  # 가족
+    v_child    = _max_amt(bucket.get(LBL_LIAB_3, [])) if LBL_LIAB_3 in bucket else 0  # 자녀
 
-    for lbl in (LBL_LIAB_1, LBL_LIAB_2):
-        if lbl in bucket:
-            for c in bucket.get(lbl, []):
-                t = _na(c)
-                if ("자녀" in t) and ("배상" in t):
-                    liab_items_child.append(c)
-                else:
-                    liab_items_general.append(c)
+    has_row_personal = LBL_LIAB_1 in row_map
+    has_row_family   = LBL_LIAB_2 in row_map
+    has_row_child    = LBL_LIAB_3 in row_map
 
-    # 금액 산정
-    v_child = _max_amt(liab_items_child) if liab_items_child else 0
-    v_general = _max_amt(liab_items_general) if liab_items_general else 0
+    # 자녀 배상(자배책) 먼저 처리
+    if v_child > 0:
+        # 자녀 전용 행이 있으면 거기에, 없으면 일상/가족 중 존재하는 곳에 태운다
+        if has_row_child:
+            target_child = LBL_LIAB_3
+        elif has_row_personal:
+            target_child = LBL_LIAB_1
+        elif has_row_family:
+            target_child = LBL_LIAB_2
+        else:
+            target_child = None
 
-    if v_child or v_general:
-        row_primary, row_secondary = _pick_liab_rows()
+        if target_child:
+            prev = _nz(out.get(target_child, "")).strip()
+            piece = f"자배책 {format_amount_short(v_child)}"
+            out[target_child] = f"{prev}, {piece}" if prev else piece
 
-        # ① 자녀 배상(자배책) 우선 표기
-        if v_child:
-            out[row_primary] = f"자배책 {format_amount_short(v_child)}"
+    # 일배/가배 처리
+    # ① 일상/가족 두 행이 모두 있는 템플릿이면 각 행에 따로
+    if has_row_personal and has_row_family:
+        if v_personal > 0:
+            out[LBL_LIAB_1] = f"일배책 {format_amount_short(v_personal)}"
+        if v_family > 0:
+            out[LBL_LIAB_2] = f"가배책 {format_amount_short(v_family)}"
+    else:
+        # ② 행이 1개만 있을 때 → 그 한 줄에 합쳐서 찍기
+        target = None
+        if has_row_personal:
+            target = LBL_LIAB_1
+        elif has_row_family:
+            target = LBL_LIAB_2
 
-        # ② 일반/가족 배상(가배책) 표기
-        if v_general:
-            # 두 라벨이 있으면 남는 쪽에, 없으면 같은 칸에 덧붙이지 않고 자배책 우선
-            target = row_secondary if (row_secondary and (row_secondary != row_primary)) else None
-            if target:
-                out[target] = f"가배책 {format_amount_short(v_general)}"
-            elif not v_child:
-                # 라벨 1개뿐이고 자배책이 없을 때만 가배책 단독 표기
-                out[row_primary] = f"가배책 {format_amount_short(v_general)}"
+        if target and (v_personal > 0 or v_family > 0):
+            parts = []
+            if v_personal > 0:
+                parts.append(f"일배책 {format_amount_short(v_personal)}")
+            if v_family > 0:
+                parts.append(f"가배책 {format_amount_short(v_family)}")
+
+            prev = _nz(out.get(target, "")).strip()
+            txt = ", ".join(parts)
+            out[target] = f"{prev}, {txt}" if prev else txt
+
 
 
     # ── 4) 화재벌금 ────────────────────────────────────────────────

@@ -3,7 +3,8 @@
 from __future__ import annotations
 import re
 from typing import Optional
-from .. import config
+
+from ..import config
 
 # ─────────────────────────────────────────────────────────────
 # 작은 유틸
@@ -33,6 +34,9 @@ def _pick(*cands: str) -> Optional[str]:
 
 # ─────────────────────────────────────────────────────────────
 # 표준 라벨 (config.HARDCODED_ROW_MAP 기반)
+#   ※ 생활배상(일/가/자녀)은 템플릿 유무와 상관없이
+#      고정 문자열로 두고, 실제 엑셀 기록 단계에서
+#      HARDCODED_ROW_MAP 존재 여부를 다시 체크한다.
 # ─────────────────────────────────────────────────────────────
 # 사망/후유
 LBL_DEATH_D   = _pick("질병사망")
@@ -57,9 +61,12 @@ LBL_TOOTH     = _pick("보존 / 보철")
 LBL_FX_DIAG   = _pick("골절,화상 진단비")
 LBL_FX_SURG   = _pick("골절,화상 수술비")
 
-# 배상/벌금(표준 라벨)
-LBL_LIAB_D = _pick("일상생활배상책임")
-LBL_LIAB_F = _pick("가족생활배상책임")
+# 배상/벌금
+# ─ 생활배상 3종은 템플릿이 없어도 라벨은 고정 문자열로 유지
+LBL_LIAB_D = "일상생활배상책임"         # 일배책
+LBL_LIAB_F = "가족생활배상책임"         # 가배책
+LBL_LIAB_C = "자녀일상생활배상책임"     # 자배책
+
 LBL_FFINE  = _pick("화재벌금")
 LBL_FINE   = _pick("벌금 대인/대물")
 LBL_LAW    = _pick("변호사 선임비용(방어비용)")
@@ -115,7 +122,27 @@ RX = {
     "tooth": re.compile(r"(보존|보철)"),
 
     # 배상/벌금(라벨 라우팅용)
-    "liab": re.compile(r"(일상생활배상책임|가족생활배상책임|일배|가배책)", re.I),
+    # 공통 인식용
+    "liab": re.compile(
+        r"(일상생활배상책임|가족생활배상책임|자녀일상생활배상책임|"
+        r"일상생활배상|가족생활배상|일상배상책임|일상배상|"
+        r"일배책|가배책|자배책)",
+        re.I,
+    ),
+    # 세부 구분용 — 공통 문자열에서 다시 쪼갬
+    "liab_personal": re.compile(
+        r"(일상생활배상책임|일상생활배상|일상배상책임|일상배상|일배책)",
+        re.I,
+    ),
+    "liab_family": re.compile(
+        r"(가족생활배상책임|가족생활배상|가배책)",
+        re.I,
+    ),
+    "liab_child": re.compile(
+        r"(자녀일상생활배상책임|자녀일상생활배상|자배책)",
+        re.I,
+    ),
+
     "ff":   re.compile(r"(화재\s*벌금)", re.I),
     "fine": re.compile(r"(벌금)", re.I),
     "law":  re.compile(r"(변호사\s*선임|방어비용)", re.I),
@@ -142,38 +169,70 @@ def find_label(name: str, assoc: str) -> Optional[str]:
     na = _normalize_injury_words(_nosp(_nz(name) + "|" + _nz(assoc)))
 
     # 사망/후유
-    if LBL_DEATH_I and RX["death_i"].search(na):  return LBL_DEATH_I
-    if LBL_DEATH_D and RX["death_d"].search(na):  return LBL_DEATH_D
-    if LBL_IMPAIR_I and RX["imp_i"].search(na):   return LBL_IMPAIR_I
-    if LBL_IMPAIR_D and RX["imp_d"].search(na):   return LBL_IMPAIR_D
+    if LBL_DEATH_I and RX["death_i"].search(na):
+        return LBL_DEATH_I
+    if LBL_DEATH_D and RX["death_d"].search(na):
+        return LBL_DEATH_D
+    if LBL_IMPAIR_I and RX["imp_i"].search(na):
+        return LBL_IMPAIR_I
+    if LBL_IMPAIR_D and RX["imp_d"].search(na):
+        return LBL_IMPAIR_D
 
     # 뇌/심 진단 3종 — 우선 고정 매핑
-    if LBL_CEREBRO and RX["cerebro"].search(na):   return LBL_CEREBRO
-    if LBL_MI and RX["mi"].search(na):             return LBL_MI
-    if LBL_ISCHEMIC and RX["ischemic"].search(na): return LBL_ISCHEMIC
+    if LBL_CEREBRO and RX["cerebro"].search(na):
+        return LBL_CEREBRO
+    if LBL_MI and RX["mi"].search(na):
+        return LBL_MI
+    if LBL_ISCHEMIC and RX["ischemic"].search(na):
+        return LBL_ISCHEMIC
 
     # 실손
-    if LBL_SIL_INP and RX["sil_in"].search(na):   return LBL_SIL_INP
-    if LBL_SIL_OUT and RX["sil_out"].search(na):  return LBL_SIL_OUT
-    if LBL_SIL_M1 and RX["sil_m1"].search(na):    return LBL_SIL_M1
-    if LBL_SIL_M2 and RX["sil_m2"].search(na):    return LBL_SIL_M2
-    if LBL_SIL_M3 and RX["sil_m3"].search(na):    return LBL_SIL_M3
+    if LBL_SIL_INP and RX["sil_in"].search(na):
+        return LBL_SIL_INP
+    if LBL_SIL_OUT and RX["sil_out"].search(na):
+        return LBL_SIL_OUT
+    if LBL_SIL_M1 and RX["sil_m1"].search(na):
+        return LBL_SIL_M1
+    if LBL_SIL_M2 and RX["sil_m2"].search(na):
+        return LBL_SIL_M2
+    if LBL_SIL_M3 and RX["sil_m3"].search(na):
+        return LBL_SIL_M3
 
     # 일반 수술/종수술
-    if LBL_GEN_SURG_I and RX["surg_i"].search(na): return LBL_GEN_SURG_I
-    if LBL_GEN_SURG_D and RX["surg_d"].search(na): return LBL_GEN_SURG_D
-    if LBL_GEN_5 and RX["surg_5"].search(na):      return LBL_GEN_5
+    if LBL_GEN_SURG_I and RX["surg_i"].search(na):
+        return LBL_GEN_SURG_I
+    if LBL_GEN_SURG_D and RX["surg_d"].search(na):
+        return LBL_GEN_SURG_D
+    if LBL_GEN_5 and RX["surg_5"].search(na):
+        return LBL_GEN_5
 
     # 골절/화상/치과
-    if LBL_FX_DIAG and RX["fx_diag"].search(na):   return LBL_FX_DIAG
-    if LBL_FX_SURG and RX["fx_surg"].search(na):   return LBL_FX_SURG
-    if LBL_TOOTH and RX["tooth"].search(na):       return LBL_TOOTH
+    if LBL_FX_DIAG and RX["fx_diag"].search(na):
+        return LBL_FX_DIAG
+    if LBL_FX_SURG and RX["fx_surg"].search(na):
+        return LBL_FX_SURG
+    if LBL_TOOTH and RX["tooth"].search(na):
+        return LBL_TOOTH
 
-    # 배상/벌금(라벨 라우팅; 집계는 각 전담 모듈에서 처리)
-    if LBL_LIAB_D and RX["liab"].search(na):
-        return LBL_LIAB_D
-    if LBL_LIAB_F and ("가족생활배상책임" in na):
+    # 배상/벌금(라벨 라우팅; 집계는 rules/fx_burn.py에서 처리)
+    # 1) 자녀 → 2) 가족 → 3) 일상
+    if RX["liab_child"].search(na):
+        return LBL_LIAB_C
+    if RX["liab_family"].search(na):
         return LBL_LIAB_F
+    if RX["liab_personal"].search(na):
+        return LBL_LIAB_D
+
+    # 4) 그래도 배상 키워드는 있는데 위에서 안 잡힌 경우 → 일배책 우선
+    if RX["liab"].search(na):
+        # 템플릿에 어떤 행이 있든, 우선 논리 라벨만 돌려주고
+        # 엑셀 기록 단계에서 HARDCODED_ROW_MAP으로 실제 행 존재 여부 판단
+        if LBL_LIAB_D:
+            return LBL_LIAB_D
+        if LBL_LIAB_F:
+            return LBL_LIAB_F
+        return LBL_LIAB_C
+
     if LBL_FFINE and RX["ff"].search(na):
         return LBL_FFINE
     if LBL_FINE and RX["fine"].search(na) and not RX["ff"].search(na):
@@ -218,8 +277,11 @@ def is_whitelisted(name: str, assoc: str) -> bool:
     na = _nosp(_nz(name) + "|" + _nz(assoc))
 
     # 혈전용해 변형 허용
-    if any(k in na for k in ("혈전용해", "혈전용해치료", "혈전용해치료비", "혈전용해수술", "혈전용해수술비", "혈전용해수술료",
-                              "혈전 용해", "혈전-용해", "혈전·용해")):
+    if any(k in na for k in (
+        "혈전용해", "혈전용해치료", "혈전용해치료비",
+        "혈전용해수술", "혈전용해수술비", "혈전용해수술료",
+        "혈전용해", "혈전-용해", "혈전·용해"
+    )):
         return True
 
     # 다빈치/로봇 + 암
