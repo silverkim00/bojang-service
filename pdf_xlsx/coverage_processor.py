@@ -1,4 +1,4 @@
-# coverage_processor.py — v2025-11-12b (KST, optimized & safe)
+# coverage_processor.py — v2025-11-17b (KST, CI tagging clean)
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
@@ -27,8 +27,9 @@ except Exception:
         "combo_or_match": True,
         "drop_pseudo_small_under": 2_000_000,
     }
+
 # ============================================================
-# [섹션 B0] 토큰·정규식 상수(중앙집중)
+# [섹션 B0] 토큰·정규식 상수
 # ============================================================
 SURGERY_TOKENS = frozenset((
     "수술","종수술","대수술","기관수술","기관수술비",
@@ -60,7 +61,6 @@ RX_INTEGRATED_M_DER  = re.compile(r"(보장|특정.*전이암)")
 # ============================================================
 # [섹션 B] 외부 규칙 훅(존재하지 않아도 안전)
 # ============================================================
-
 try:
     from .rules.registry import (
         find_label as reg_find_label,
@@ -111,9 +111,11 @@ except Exception:
 
 
 try:
-    from .rules.icu import route_day_coverage as icu_route_day
-    from .rules.icu import aggregate_icu as icu_aggregate_icu
-    from .rules.icu import aggregate_inpatient as icu_aggregate_inpatient
+    from .rules.icu import (
+        route_day_coverage as icu_route_day,
+        aggregate_icu as icu_aggregate_icu,
+        aggregate_inpatient as icu_aggregate_inpatient,
+    )
 except Exception:
     icu_route_day = None
     icu_aggregate_icu = None
@@ -157,7 +159,18 @@ except Exception:
     def dental_aggregate(bucket, out): return None
 
 
+# --- CI 훅: 실제 구현은 rules/ci.py 에서 담당 ---
+try:
+    from .rules.ci import mark_ci_metadata, apply_ci_tag
+except Exception:
+    def mark_ci_metadata(product, covs):  # type: ignore[unused-arg]
+        return
+    def apply_ci_tag(bucket, out):        # type: ignore[unused-arg]
+        return
+
+
 from .logger_setup import get_logger
+
 
 def _trace(tag: str, msg: str) -> None:
     try:
@@ -165,29 +178,36 @@ def _trace(tag: str, msg: str) -> None:
     except Exception:
         pass
 
+
 # ============================================================
 # [섹션 C] 로깅/유틸
 # ============================================================
-def _name_assoc(c: Dict) -> str:
-    return _nz(c.get("name", "")) + _nz(c.get("association_name", ""))
-
 def _has_any(t: str, keys) -> bool:
     t = _nosp(t)
     return any(k in t for k in keys)
+
 
 def _infer_pay_mode(c: Dict) -> Optional[str]:
     assoc_raw = _nz(c.get("association_name", ""))
     assoc = _nosp(assoc_raw).lower()
     typ   = _nosp(_nz(c.get("type", ""))).lower()
-    if assoc == "" or assoc == "null": return "비례"
-    if ("정액" in assoc_raw) or ("정액" in typ): return "정액"
+    if assoc == "" or assoc == "null":
+        return "비례"
+    if ("정액" in assoc_raw) or ("정액" in typ):
+        return "정액"
     return None
+
 
 def _norm_coverages(raw) -> List[Dict[str, str]]:
     covs = []
-    product = _nz((isinstance(raw, dict) and (raw.get("product_name") or raw.get("상품명") or raw.get("name") or raw.get("title"))) or "")
+    product = _nz(
+        (isinstance(raw, dict) and
+         (raw.get("product_name") or raw.get("상품명") or raw.get("name") or raw.get("title")))
+        or ""
+    )
     for c in (raw.get("coverages") if isinstance(raw, dict) else []) or []:
-        if not isinstance(c, dict): continue
+        if not isinstance(c, dict):
+            continue
         covs.append({
             "product_name": product,
             "page": _nz(c.get("page") or c.get("page_no") or c.get("_page") or ""),
@@ -200,8 +220,10 @@ def _norm_coverages(raw) -> List[Dict[str, str]]:
         })
     return covs
 
+
 _UNMAPPED_LOG = getattr(config, "UNMAPPED_LOG", getattr(config, "UNMAPPED_LOG_FILE", "unmapped_log.txt"))
 _EXCLUDED_LOG = getattr(config, "EXCLUDED_LOG", getattr(config, "EXCLUDED_LOG_FILE", "excluded_log.txt"))
+
 
 def _fmt_log_line(c: Dict, seq: int | None = None) -> str:
     z = lambda x: (x or "").strip()
@@ -214,7 +236,8 @@ def _fmt_log_line(c: Dict, seq: int | None = None) -> str:
         v = None
     amt_short = format_amount_short(v) if v else "-"
 
-    raw = c.get("block_no") or (isinstance(c.get("_raw"), dict) and (c["_raw"].get("block_no") or c["_raw"].get("block")))
+    raw = c.get("block_no") or (isinstance(c.get("_raw"), dict)
+                                and (c["_raw"].get("block_no") or c["_raw"].get("block")))
     blk = None
     if raw is not None:
         try:
@@ -227,36 +250,44 @@ def _fmt_log_line(c: Dict, seq: int | None = None) -> str:
     reason = (c.get("_reason") or "").strip()
     hint   = (c.get("_hint") or "").strip()
 
-    cols = [f"{blk}", f"{ty or '-'}", f"{name or '-'}", f"{assoc or '-'}", f"{amt_short}", f"{reason or ''}", f"{hint or ''}"]
+    cols = [
+        f"{blk}", f"{ty or '-'}", f"{name or '-'}",
+        f"{assoc or '-'}", f"{amt_short}", f"{reason or ''}", f"{hint or ''}"
+    ]
     return " | ".join([x if x != "" else "-" for x in cols]) + " |"
+
 
 def _write(path: str, items: List[Dict], product: dict | None = None):
     try:
         from loggers.log_writer import write as _lw
-        _lw(path, items, product); return
+        _lw(path, items, product)
+        return
     except Exception:
         pass
     try:
-        d = os.path.dirname(path);  os.makedirs(d, exist_ok=True) if d else None
+        d = os.path.dirname(path)
+        os.makedirs(d, exist_ok=True) if d else None
         with open(path, "a", encoding="utf-8-sig") as f:
             if product:
                 comp = (product.get("company") or product.get("회사") or "").strip()
                 prod = (product.get("product_name") or product.get("상품명") or "").strip()
-                cdate= (product.get("contract_date") or "").strip()
+                cdate = (product.get("contract_date") or "").strip()
                 prem = (product.get("monthly_premium") or "").strip()
                 tail = []
-                if cdate: tail.append(f"가입일자: {cdate}")
-                if prem:  tail.append(f"월납: {prem}")
-                f.write("\n" + "="*92 + "\n")
+                if cdate:
+                    tail.append(f"가입일자: {cdate}")
+                if prem:
+                    tail.append(f"월납: {prem}")
+                f.write("\n" + "=" * 92 + "\n")
                 f.write(f"상품 시작 : {comp} | {prod} {'| ' + ' | '.join(tail) if tail else ''}\n")
                 f.write("주요 보장 목록 (블럭 1부터)\n")
-                f.write("-"*92 + "\n")
+                f.write("-" * 92 + "\n")
             for i, c in enumerate(items, 1):
                 f.write(_fmt_log_line(c, seq=i) + "\n")
             if product:
-                f.write("-"*92 + "\n")
+                f.write("-" * 92 + "\n")
                 f.write("#######  상품 종료 (END OF PRODUCT)  #######\n")
-                f.write("="*92 + "\n\n")
+                f.write("=" * 92 + "\n\n")
     except Exception:
         pass
 
@@ -269,63 +300,65 @@ _FORCE_EXC_KEYS = (
     "자동차보험료","보험료할증","할증","형사합의","위로금","비표준실손",
     "5대골절","5대골절수술비","5대골절진단비","중대골절","중대화상","중증화상"
 )
-_BASE_EXC_KEYS  = ["관혈","비관혈","생활질병"] + list(getattr(config, "EXCLUSION_KEYWORDS", []))
+
+# config.EXCLUSION_KEYWORDS 에 '주계약' 이 있어도 여기서는 제외
+_BASE_EXC_CORE = ["관혈","비관혈","생활질병"]
+_EXC_FROM_CFG: List[str] = []
+for _k in getattr(config, "EXCLUSION_KEYWORDS", []):
+    if _k and _k.replace(" ", "") == "주계약":
+        continue
+    _EXC_FROM_CFG.append(_k)
+_BASE_EXC_KEYS = _BASE_EXC_CORE + _EXC_FROM_CFG
+
 
 def _exclude_reason(name: str, assoc: str) -> tuple[bool, str | None]:
     """
-    로컬 제외 규칙(정규화 이전 문자열 포함 검사):
-      - 교통상해사망: 무조건 제외(EXC/TRAFFIC_DEATH)
-      - 산정특례 진단/특정상해후유장해: 제외
-      - 특정질병/특정상해 입원일당: 제외(EXC/SPEC_DISEASE_HOSP)
-      - '단독' 특정질병수술(패키지/종수 패턴 없는 경우): 제외(EXC/SPEC_DISEASE_SURG_SOLO)
-      - 운전자/배상/벌금/실손·암치료 도메인: 통과
-      - 강제 제외 키/전역 EXCLUSION(수술 도메인 제외 시): 제외
-      - 사망/후유장해 자체는 통과(별도 훅이 처리)
+    로컬 제외 규칙(정규화 이전 문자열 포함 검사)
     """
     raw = (name or "") + (assoc or "")
 
-    # 0) 교통상해 사망
+    # 교통상해 사망
     if TRAFFIC_DEATH_RX.search(raw):
         return True, "EXC/TRAFFIC_DEATH"
 
     s = _nosp(raw)
 
-    # >>> NEW 1) 특정질병/특정상해 입원일당 → 입구에서 바로 컷
-    #     예: "특정질병입원일당", "특정상해입원일당"
+    # 특정질병/특정상해 입원일당 컷
     if "특정질병입원일당" in s or "특정상해입원일당" in s:
         return True, "EXC/SPEC_DISEASE_HOSP"
 
     has_surgery_domain = ("수술" in s) or any(k in s for k in SURGERY_TOKENS)
 
-    # 기존 특례/후유장해 컷
+    # 특례/후유장해 컷
     if "특정상해후유장해" in s:
         return True, "EXC/SPECIFIC_INJURY_IMPAIRMENT"
     if ("산정특례" in s) and (("진단" in s) or ("진단비" in s)):
         return True, "EXC/SANJEONGTOKRYE_DIAG"
 
-    # 교통사고처리지원금은 그대로 통과
+    # 교통사고처리지원금은 통과
     if "교통사고처리지원금" in s:
         return False, None
 
-    # 암 치료/지원/RT/Drug/카티/입·통원 신호는 통과
+    # 암 치료/지원/RT/Drug/입·통원 신호는 통과
     if ("암" in s) and (
-        any(k in s for k in ("치료지원금","주요치료","특정치료","통합치료","암주요치료","암특정치료")) or
-        any(k in s for k in RT_TOKENS) or
-        any(k in s for k in DRUG_TOKENS) or
-        any(k in s for k in ("입원","통원","입원일당","통원일당","입원비","통원비"))
+        any(k in s for k in ("치료지원금","주요치료","특정치료","통합치료","암주요치료","암특정치료"))
+        or any(k in s for k in RT_TOKENS)
+        or any(k in s for k in DRUG_TOKENS)
+        or any(k in s for k in ("입원","통원","입원일당","통원일당","입원비","통원비"))
     ):
         return False, None
 
-    # 특정순환계질환 통합치료류는 통과
-    if any(k in s for k in ("특정순환계질환","순환계질환","순환계")) and any(k in s for k in ("치료","치료비","통합치료")):
+    # 특정순환계질환 통합치료류 통과
+    if (any(k in s for k in ("특정순환계질환","순환계질환","순환계"))
+            and any(k in s for k in ("치료","치료비","통합치료"))):
         return False, None
 
-    # 운전자/배상/벌금/변호사/자동차부상 영역은 통과
+    # 운전자/배상/벌금/변호사/자동차부상
     if any(k in s for k in ("일상생활배상책임","가족생활배상책임","가족일상생활배상책임","일배","가배책",
                              "교통사고처리","형사합의","변호사선임","방어비용","벌금","화재벌금","자동차사고부상","자동차부상")):
         return False, None
 
-    # 실손/의료비 계열은 통과
+    # 실손/의료비 계열
     if any(k in s for k in ("의료비","입원의료비","통원의료비","비급여mri","mri검사","mri",
                              "주사제","비급여주사","도수","체외충격파","증식치료")):
         return False, None
@@ -335,22 +368,13 @@ def _exclude_reason(name: str, assoc: str) -> tuple[bool, str | None]:
         k = next(k for k in _FORCE_EXC_KEYS if k in s)
         return True, f"EXC/RULE:{k}"
 
-    # >>> NEW 2) '단독' 특정질병수술 컷
-    #     - "특정질병수술"은 포함
-    #     - 2대/5대/N대/종수술/대수술 같은 패키지 키워드 없음
-    #     - "1~5종수술", "3종수술" 같은 숫자+종+수술 패턴 없음
-    #
-    #     예)
-    #       무원터치의료보장1.2(1종) | 특정질병수술 | 1,000만 → 컷
-    #       질병1~5종수술(특정질병수술 포함) → 종수술 패턴 때문에 살려둠
+    # '단독' 특정질병수술 컷
     if "특정질병수술" in s:
         pkg_tokens = (
             "2대수술","3대수술","4대수술","5대수술",
             "n대수술","N대수술","종수술","대수술",
         )
         has_pkg_keyword = any(tok in s for tok in pkg_tokens)
-
-        # 숫자+종+수술 패턴 (1종수술, 1~5종수술 등)
         has_gkind_surg = bool(
             re.search(r"\d+\s*(?:[~\-]\s*\d+)?\s*종\s*수술", s)
         )
@@ -358,17 +382,19 @@ def _exclude_reason(name: str, assoc: str) -> tuple[bool, str | None]:
         if not has_pkg_keyword and not has_gkind_surg:
             return True, "EXC/SPEC_DISEASE_SURG_SOLO"
 
-    # G5(종수술 종수 명시)는 웬만하면 컷하지 말고 도메인으로 보냄
+    # G5(종수술 종수 명시)는 컷하지 말고 도메인으로 보냄
     if RX_G5_NUM.search(s):
         return False, None
 
     # 수술 도메인이 아니면 BASE_EXC_KEYS 적용
     if not has_surgery_domain:
         for k in _BASE_EXC_KEYS:
+            if not k:
+                continue
             if k.replace(" ", "") in s:
                 return True, f"EXC/KEY:{k}"
 
-    # 교통 후유장해는 컷
+    # 교통 후유장해 컷
     if ("교통" in s) and ("후유장해" in s):
         return True, "EXC/KEY:교통후유장해"
 
@@ -376,7 +402,7 @@ def _exclude_reason(name: str, assoc: str) -> tuple[bool, str | None]:
     if ("사망" in s) or ("후유장해" in s):
         return False, None
 
-    # 장기요양/재가/시설급여 쪽은 통과 (요양 도메인)
+    # 장기요양/재가/시설급여 → 요양 도메인
     if any(k in s for k in CARE_TOKENS):
         return False, None
 
@@ -401,10 +427,19 @@ LABEL_ALIASES_TO_TEMPLATE = {
 # ============================================================
 def aggregate_coverages(product: dict) -> Tuple[Dict[str, List[Dict]], List[str], List[str]]:
     covs = _norm_coverages(product)
-    # 캐싱(정규화된 문자열/금액)
+
+    # 1) CI 메타 태깅 (rules.ci)
+    try:
+        mark_ci_metadata(product, covs)
+    except Exception:
+        pass
+
+    # 2) 캐싱(정규화된 문자열/금액)
     for c in covs:
-        name  = _nz(c.get("name", ""));  assoc = _nz(c.get("association_name", ""))
-        ns_n  = _nosp(name);             ns_a  = _nosp(assoc)
+        name  = _nz(c.get("name", ""))
+        assoc = _nz(c.get("association_name", ""))
+        ns_n  = _nosp(name)
+        ns_a  = _nosp(assoc)
         c["_ns_name"], c["_ns_assoc"] = ns_n, ns_a
         c["_ns_all"] = ns_n + "|" + ns_a
         try:
@@ -415,136 +450,195 @@ def aggregate_coverages(product: dict) -> Tuple[Dict[str, List[Dict]], List[str]
     product_has_cancer = any("암" in (c.get("_ns_all") or "") for c in covs or [])
 
     # 통합세트 메인 금액 수집
-    integ_main_c = set(); integ_main_m = set()
+    integ_main_c = set()
+    integ_main_m = set()
     for _c in covs or []:
-        nm = _c.get("_ns_name",""); ac = _c.get("_ns_assoc","")
-        v = _c.get("_amt", 0)
-        if v <= 0: continue
+        nm = _c.get("_ns_name", "")
+        ac = _c.get("_ns_assoc", "")
+        v  = _c.get("_amt", 0)
+        if v <= 0:
+            continue
         if RX_INTEGRATED_C.search(nm) and RX_INTEGRATED_C_MAIN.search(ac):
             integ_main_c.add(v)
-        if RX_INTEGRATED_M.search(nm) and (("전이암" in ac and "진단" in ac) or RX_INTEGRATED_M_MAIN.search(ac)):
+        if RX_INTEGRATED_M.search(nm) and (
+            ("전이암" in ac and "진단" in ac) or RX_INTEGRATED_M_MAIN.search(ac)
+        ):
             integ_main_m.add(v)
 
-    kept, excluded = [], []
+    kept: List[Dict] = []
+    excluded: List[Dict] = []
+
+    # 3) 1차 필터링(+ CI 코어 보호)
     for c in covs:
-        nm, ac = _nz(c.get("name", "")), _nz(c.get("association_name", ""))
-        s_all = c.get("_ns_all","")
+        nm, ac   = _nz(c.get("name", "")), _nz(c.get("association_name", ""))
+        nm_ns, ac_ns = c.get("_ns_name", ""), c.get("_ns_assoc", "")
+        s_all    = c.get("_ns_all", "")
 
-        # 화이트리스트 우선 통과
+        # CI 코어: CI 상품 + 주계약 진단/사망 등 (rules.ci에서 _ci_product/_ci_core 세팅)
+        is_ci_core = bool(c.get("_ci_product") and c.get("_ci_core"))
+
+        # 화이트리스트
         if reg_is_whitelisted(nm, ac):
-            kept.append(c);  continue
+            kept.append(c)
+            continue
 
-        # === G5/PREPASS_START ===
+        # 종수술 프리패스
         if RX_G5_ANY.search(s_all) and ("종수술" in s_all or RX_G5_NUM.search(s_all)):
             c["_g5_prepass"] = True
             kept.append(c)
             continue
-        # === G5/PREPASS_END ===
 
-        # === CARE_PREPASS_START ===
+        # 요양 프리패스
         if any(k in s_all for k in CARE_TOKENS):
             c["_care_prepass"] = True
             kept.append(c)
             continue
-        # === CARE_PREPASS_END ===
 
         # 로컬/레지스트리 제외
         base_ex, base_reason = _exclude_reason(nm, ac)
         blk_ex  = reg_should_exclude(nm, ac)
 
-        if base_ex or blk_ex:
-            # 암 치료 도메인 관대 통과(교통상해사망은 이미 base_ex에서 컷)
-            if ("암" in s_all) and (
-                any(k in s_all for k in ("치료지원금","주요치료","특정치료","통합치료","암주요치료","암특정치료")) or
-                any(k in s_all for k in RT_TOKENS) or
-                any(k in s_all for k in DRUG_TOKENS)
-            ):
-                kept.append(c);  continue
+        # CI 코어는 EXC 무시
+        if is_ci_core:
+            base_ex, base_reason, blk_ex = False, None, False
 
+        if base_ex or blk_ex:
+            # 암 치료 도메인 관대 통과(교통상해사망은 이미 컷)
+            if ("암" in s_all) and (
+                any(k in s_all for k in ("치료지원금","주요치료","특정치료","통합치료","암주요치료","암특정치료"))
+                or any(k in s_all for k in RT_TOKENS)
+                or any(k in s_all for k in DRUG_TOKENS)
+            ):
+                kept.append(c)
+                continue
+
+            # 종수술 재가드
             if RX_G5_ANY.search(s_all) and ("종수술" in s_all or RX_G5_NUM.search(s_all)):
-                kept.append(c);  continue
+                kept.append(c)
+                continue
 
             if not base_reason and blk_ex:
                 base_reason = "EXC/BLACKLIST"
             c["_reason"] = base_reason or "EXC"
-            excluded.append(c); continue
+            excluded.append(c)
+            continue
 
         kept.append(c)
 
-    if excluded: _write(_EXCLUDED_LOG, excluded, product)
+    if excluded:
+        _write(_EXCLUDED_LOG, excluded, product)
 
     bucket: Dict[str, List[Dict]] = defaultdict(list)
     unmapped: List[Dict] = []
     excluded_post: List[Dict] = []
 
-    meta_seen = 0; meta_routed = 0
+    meta_seen = 0
+    meta_routed = 0
 
     def _has_rt(txt: str) -> bool:
         t = _nosp(txt)
         return any(k in t for k in RT_TOKENS)
+
     def _has_drug(txt: str) -> bool:
         t = _nosp(txt)
         return any(k in t for k in DRUG_TOKENS)
 
+    # 4) 실제 버킷 라우팅
     for c in kept:
-        name = _nz(c.get("name", "")); assoc = _nz(c.get("association_name", ""))
-        nm_ns, ac_ns = c.get("_ns_name",""), c.get("_ns_assoc","")
-        s_all = c.get("_ns_all","")
+        name  = _nz(c.get("name", ""))
+        assoc = _nz(c.get("association_name", ""))
+        nm_ns, ac_ns = c.get("_ns_name", ""), c.get("_ns_assoc", "")
+        s_all = c.get("_ns_all", "")
 
         if ("전이" in s_all) and ("암" in s_all):
             meta_seen += 1
             _trace("FLOW_META_CAND@covagg", f"name={name}, assoc={assoc}")
 
-        # 합본 판정
+        # 합본(방사선+약물) 판정
         name_rt, name_dr = _has_rt(name), _has_drug(name)
-        assoc_rt, assoc_dr= _has_rt(assoc), _has_drug(assoc)
+        assoc_rt, assoc_dr = _has_rt(assoc), _has_drug(assoc)
         strict_both = (name_rt and name_dr) and (assoc_rt and assoc_dr)
-        loose_hint  = ("항암방사선약물치료비" in s_all) or ("방사선약물" in s_all) or ("방사선·약물" in s_all) or ("방사선.약물" in s_all) or ("약물·방사선" in s_all) or bool(RX_COMBO_HINT.search(s_all))
+        loose_hint  = (
+            ("항암방사선약물치료비" in s_all)
+            or ("방사선약물" in s_all)
+            or ("방사선·약물" in s_all)
+            or ("방사선.약물" in s_all)
+            or ("약물·방사선" in s_all)
+            or bool(RX_COMBO_HINT.search(s_all))
+        )
         cross_pair  = (name_rt and assoc_dr) or (name_dr and assoc_rt)
         combo_or = bool(CANCER_POLICY.get("combo_or_match", True))
         is_combo = strict_both or loose_hint or (cross_pair if combo_or else False)
 
-        # 통합암/전이(메인만 유지)
+        # 통합암
         if RX_INTEGRATED_C.search(nm_ns):
             amt = c.get("_amt", 0)
             if RX_INTEGRATED_C_MAIN.search(ac_ns):
-                if product_has_cancer: bucket["__INTEGRATED_CANCER__"].append(c)
+                if product_has_cancer:
+                    bucket["__INTEGRATED_CANCER__"].append(c)
                 continue
             else:
-                if (integ_main_c and (amt in integ_main_c)) and (RX_INTEGRATED_C_DER.search(ac_ns) or RX_INTEGRATED_C_DER.search(nm_ns)):
-                    c["_reason"] = "세트"; excluded_post.append(c); continue
+                if (integ_main_c and (amt in integ_main_c)) and (
+                    RX_INTEGRATED_C_DER.search(ac_ns) or RX_INTEGRATED_C_DER.search(nm_ns)
+                ):
+                    c["_reason"] = "세트"
+                    excluded_post.append(c)
+                    continue
 
+        # 통합 전이암
         if RX_INTEGRATED_M.search(nm_ns):
             amt = c.get("_amt", 0)
-            is_meta_main = ((("전이암" in ac_ns) and ("진단" in ac_ns)) or RX_INTEGRATED_M_MAIN.search(ac_ns) or RX_INTEGRATED_M_MAIN.search(nm_ns) or (("전이암" in nm_ns) and ("진단" in (nm_ns+ac_ns))))
+            is_meta_main = (
+                (("전이암" in ac_ns) and ("진단" in ac_ns))
+                or RX_INTEGRATED_M_MAIN.search(ac_ns)
+                or RX_INTEGRATED_M_MAIN.search(nm_ns)
+                or (("전이암" in nm_ns) and ("진단" in (nm_ns + ac_ns)))
+            )
             if is_meta_main:
                 if product_has_cancer:
-                    bucket["__INTEGRATED_META__"].append(c); meta_routed += 1
-                    _trace("FLOW_META_ROUTE@covagg", f"bucket=__INTEGRATED_META__, name={name}, assoc={assoc}, amt={_nz(c.get('amount'))}")
+                    bucket["__INTEGRATED_META__"].append(c)
+                    meta_routed += 1
+                    _trace(
+                        "FLOW_META_ROUTE@covagg",
+                        f"bucket=__INTEGRATED_META__, name={name}, assoc={assoc}, amt={_nz(c.get('amount'))}",
+                    )
                 continue
             else:
-                if (integ_main_m and (amt in integ_main_m)) or RX_INTEGRATED_M_DER.search(ac_ns) or RX_INTEGRATED_M_DER.search(nm_ns):
-                    c["_reason"] = "세트"; excluded_post.append(c); continue
+                if ((integ_main_m and (amt in integ_main_m))
+                        or RX_INTEGRATED_M_DER.search(ac_ns)
+                        or RX_INTEGRATED_M_DER.search(nm_ns)):
+                    c["_reason"] = "세트"
+                    excluded_post.append(c)
+                    continue
 
         # 운전자/치매
         drv_label = drv_classify(c)
-        if drv_label: bucket[drv_label].append(c); continue
+        if drv_label:
+            bucket[drv_label].append(c)
+            continue
         dem_label = dem_classify(c)
-        if dem_label: bucket[dem_label].append(c); continue
+        if dem_label:
+            bucket[dem_label].append(c)
+            continue
 
         # 간병
         routed_nursing = False
         try:
             if nursing_classify is not None:
                 lbl = nursing_classify(c)
-                if lbl: bucket[lbl].append(c); routed_nursing = True
+                if lbl:
+                    bucket[lbl].append(c)
+                    routed_nursing = True
             else:
                 if any(k in s_all for k in ("간병인","간호간병통합","간호·간병통합","간호간병")):
-                    bucket[_NURSING_LABEL].append(c); routed_nursing = True
+                    bucket[_NURSING_LABEL].append(c)
+                    routed_nursing = True
         except Exception:
             if any(k in s_all for k in ("간병인","간호간병통합","간호·간병통합","간호간병")):
-                bucket[_NURSING_LABEL].append(c); routed_nursing = True
-        if routed_nursing: continue
+                bucket[_NURSING_LABEL].append(c)
+                routed_nursing = True
+        if routed_nursing:
+            continue
 
         # 치아
         try:
@@ -565,18 +659,21 @@ def aggregate_coverages(product: dict) -> Tuple[Dict[str, List[Dict]], List[str]
             "골절,화상 진단비","골절,화상 수술비",
         }
         if direct in DIRECT_ALLOW:
-            bucket[direct].append(c);  continue
+            bucket[direct].append(c)
+            continue
 
         # 유사/소액 제외 → 일반암 진단 라우팅
         if RX_PSEUDO_EXCL_RAW.search(s_all) and product_has_cancer:
             if ("진단" in s_all) or ("진단비" in s_all):
-                bucket["일반암/고액암 진단비"].append(c); continue
+                bucket["일반암/고액암 진단비"].append(c)
+                continue
 
         # 의도 플래그
         def _intent_flags(name: str, assoc: str) -> Dict[str, bool]:
-            n = _nosp(name); combined = _nosp(f"{assoc}|{name}")
+            n = _nosp(name)
+            combined = _nosp(f"{assoc}|{name}")
             TWO_MAJOR_TOKENS = ("혈전용해","혈전용해치료","혈전용해치료비","혈전용해수술","뇌혈관질환수술","허혈성심장질환수술")
-            ORGANS_TOKENS = ("5대기관","7대기관","2대기관","대기관","기관수술","기관수술비")
+            ORGANS_TOKENS    = ("5대기관","7대기관","2대기관","대기관","기관수술","기관수술비")
             return {
                 "surgery": ("수술" in n)
                            or any(k in combined for k in ("다빈치","다빈치로봇","로봇수술"))
@@ -584,10 +681,14 @@ def aggregate_coverages(product: dict) -> Tuple[Dict[str, List[Dict]], List[str]
                            or any(k in combined for k in ORGANS_TOKENS),
                 "treat":   any(k in combined for k in RT_TOKENS)
                            or any(k in combined for k in DRUG_TOKENS)
-                           or any(k in combined for k in ("통합치료","암통합치료","특정치료","특정치료비","특정치료지원금","특정치료지원","주요치료","중점치료","치료지원금","암주요치료","암특정치료","특정순환계질환","급여치료비","방사선약물","방사선·약물","방사선.약물")),
+                           or any(k in combined for k in ("통합치료","암통합치료","특정치료","특정치료비",
+                                                          "특정치료지원금","특정치료지원","주요치료","중점치료",
+                                                          "치료지원금","암주요치료","암특정치료","특정순환계질환",
+                                                          "급여치료비","방사선약물","방사선·약물","방사선.약물")),
                 "day":     ("일당" in combined) or bool(re.search(r"암.*(입원|통원).*(일당|비)", combined)),
                 "diag":    ("진단" in combined) or ("진단비" in combined),
             }
+
         flags = _intent_flags(name, assoc)
 
         name_m  = strip_exclusions(name)
@@ -596,25 +697,32 @@ def aggregate_coverages(product: dict) -> Tuple[Dict[str, List[Dict]], List[str]
 
         # 보험료 납입지원 → 기타
         if RX_PREMIUM_SUPPORT.search(tns):
-            bucket[_OTHER_LABEL].append(c);  continue
+            bucket[_OTHER_LABEL].append(c)
+            continue
 
         # 암 입·통원 일당
-        if product_has_cancer and ("암" in tns) and _has_any(tns, ("입원","통원","입원비","통원비","입원일당","통원일당","직접치료입원","직접치료통원")):
-            bucket["암 입,통원일당"].append(c);  continue
+        if product_has_cancer and ("암" in tns) and _has_any(
+            tns, ("입원","통원","입원비","통원비","입원일당","통원일당","직접치료입원","직접치료통원")
+        ):
+            bucket["암 입,통원일당"].append(c)
+            continue
 
         # 수술 > 치료 > 일당 > 진단
         if flags["surgery"]:
             # 특정질병수술 쌍일치 제외
             if _nosp(name) == "특정질병수술" and _nosp(assoc) == "특정질병수술":
                 c["_reason"] = "EXC/SURG_SPECIFIC_DUAL"
-                excluded_post.append(c); continue
+                excluded_post.append(c)
+                continue
 
             s_lbl = surg_classify(c)
             if s_lbl:
                 if s_lbl == "__SURG_DROP__":
                     c["_reason"] = "세트" if c.get("_reason") == "세트" else "EXC/SURG_DROP"
-                    excluded_post.append(c); continue
-                bucket[s_lbl].append(c); continue
+                    excluded_post.append(c)
+                    continue
+                bucket[s_lbl].append(c)
+                continue
 
             t_all = _nosp(name + "|" + assoc)
             assoc_lower = _nosp(assoc)
@@ -623,58 +731,89 @@ def aggregate_coverages(product: dict) -> Tuple[Dict[str, List[Dict]], List[str]
 
             is_davinci = any(k in t_all for k in ("다빈치","다빈치로봇","로봇수술"))
             if ("암" in t_all) and is_davinci and product_has_cancer:
-                bucket[_CANCER_SURGERY_LABEL].append(c); continue
+                bucket[_CANCER_SURGERY_LABEL].append(c)
+                continue
 
             if ("암" in t_all and "수술" in t_all and not (is_injury_assoc or is_disease_assoc) and product_has_cancer):
                 bucket[_CANCER_SURGERY_LABEL].append(c)
             else:
                 sj = find_target_row(name_m, assoc_m) or reg_find_label(name_m, assoc_m)
                 if not sj:
-                    if is_injury_assoc or _has_any(t_all, ("상해수술",)): sj = "상해 수술비"
-                    elif is_disease_assoc or _has_any(t_all, ("질병수술","특정질병수술",)): sj = "질병 수술비"
-                if sj: bucket[sj].append(c)
+                    if is_injury_assoc or _has_any(t_all, ("상해수술",)):
+                        sj = "상해 수술비"
+                    elif is_disease_assoc or _has_any(t_all, ("질병수술","특정질병수술",)):
+                        sj = "질병 수술비"
+                if sj:
+                    bucket[sj].append(c)
             continue
 
         if flags["treat"]:
             if is_combo:
                 c["_rt_drug_combo"] = True
                 bucket["약물 치료"].append(c)
-                _trace("C_ROUTE_COMBO@covagg", f"why={'STRICT' if strict_both else 'OR_MATCH' if (cross_pair or loose_hint) else 'HINT'}, name={name}, assoc={assoc}, amt={c.get('amount')}")
+                _trace(
+                    "C_ROUTE_COMBO@covagg",
+                    f"why={'STRICT' if strict_both else 'OR_MATCH' if (cross_pair or loose_hint) else 'HINT'}, "
+                    f"name={name}, assoc={assoc}, amt={c.get('amount')}",
+                )
                 continue
 
-            has_rt_like = name_rt or assoc_rt
+            has_rt_like   = name_rt or assoc_rt
             has_drug_like = name_dr or assoc_dr
             is_circ = any(k in s_all for k in ("특정순환계질환","순환계질환","순환계","심뇌혈관","2대주요"))
             if is_circ and ("암" not in s_all) and (not has_rt_like) and (not has_drug_like) and ("수술" not in s_all):
                 if any(k in s_all for k in ("통합치료","통합치료비")):
-                    c["_circ_grp"] = "integrated"; bucket["2대주요치료비"].append(c)
-                    _trace("FLOW_BUCKET_IN@two_circ_treat", f"grp=integrated, name={name}, assoc={assoc}, amt={c.get('amount')}")
+                    c["_circ_grp"] = "integrated"
+                    bucket["2대주요치료비"].append(c)
+                    _trace(
+                        "FLOW_BUCKET_IN@two_circ_treat",
+                        f"grp=integrated, name={name}, assoc={assoc}, amt={c.get('amount')}",
+                    )
                     continue
                 if any(k in s_all for k in ("특정치료","특정치료비","특정치료지원금","특정치료지원","주요치료","중점치료","치료지원금","급여치료비")):
-                    c["_circ_grp"] = "main"; bucket["2대주요치료비"].append(c)
-                    _trace("FLOW_BUCKET_IN@two_circ_treat", f"grp=main, name={name}, assoc={assoc}, amt={c.get('amount')}")
+                    c["_circ_grp"] = "main"
+                    bucket["2대주요치료비"].append(c)
+                    _trace(
+                        "FLOW_BUCKET_IN@two_circ_treat",
+                        f"grp=main, name={name}, assoc={assoc}, amt={c.get('amount')}",
+                    )
                     continue
 
             tgt = find_target_row(name_m, assoc_m) or reg_find_label(name_m, assoc_m)
             if not tgt:
-                if has_rt_like:   tgt = "항암방사선"
-                elif has_drug_like: tgt = "약물 치료"
+                if has_rt_like:
+                    tgt = "항암방사선"
+                elif has_drug_like:
+                    tgt = "약물 치료"
             if tgt:
                 bucket[tgt].append(c)
-                _trace("FLOW_BUCKET_IN@covagg", f"bucket={tgt}, name={name}, assoc={assoc}, amt={c.get('amount')}")
+                _trace(
+                    "FLOW_BUCKET_IN@covagg",
+                    f"bucket={tgt}, name={name}, assoc={assoc}, amt={c.get('amount')}",
+                )
                 continue
 
-            if any(k in s_all for k in ("특정유사암","유사암특정")) and any(k in s_all for k in ("치료","치료비")):
-                c["_reason"] = "EXC/PSEUDO_TREAT"; excluded_post.append(c); continue
+            if any(k in s_all for k in ("특정유사암","유사암특정")) and any(
+                k in s_all for k in ("치료","치료비")
+            ):
+                c["_reason"] = "EXC/PSEUDO_TREAT"
+                excluded_post.append(c)
+                continue
 
             tgt = find_target_row(name_m, assoc_m) or reg_find_label(name_m, assoc_m)
             if not tgt:
-                if name_rt or assoc_rt:   tgt = "항암방사선"
-                elif name_dr or assoc_dr: tgt = "약물 치료"
-                elif any(k in s_all for k in ("통합치료","특정치료","주요치료","중점치료","치료지원금","암주요치료","암특정치료")):
+                if name_rt or assoc_rt:
+                    tgt = "항암방사선"
+                elif name_dr or assoc_dr:
+                    tgt = "약물 치료"
+                elif any(
+                    k in s_all
+                    for k in ("통합치료","특정치료","주요치료","중점치료","치료지원금","암주요치료","암특정치료")
+                ):
                     tgt = "암주요치료비"
             if tgt:
-                bucket[tgt].append(c);  continue
+                bucket[tgt].append(c)
+                continue
 
         if flags["day"]:
             if icu_route_day is not None:
@@ -685,50 +824,78 @@ def aggregate_coverages(product: dict) -> Tuple[Dict[str, List[Dict]], List[str]
                 if handled:
                     continue
             if RX_ROOM_GRADE.search(tns):
-                c["_reason"] = "EXC/ROOM_GRADE"; excluded_post.append(c); continue
-            bucket["질병,상해 입원일당"].append(c); continue
+                c["_reason"] = "EXC/ROOM_GRADE"
+                excluded_post.append(c)
+                continue
+            bucket["질병,상해 입원일당"].append(c)
+            continue
 
+        # 실손
         slbl = sil_classify(c)
         if slbl:
             bucket[slbl].append(c)
             continue
 
+        # 진단
         if flags["diag"]:
+            # --- 2대질환 직결 보강 (뇌출혈 / 뇌졸중 진단) ---
+            t_all = _nosp(f"{assoc_m}|{name_m}")
+            if "뇌출혈" in t_all:
+                bucket["뇌출혈"].append(c)
+                continue
+            if "뇌졸중" in t_all:
+                bucket["뇌졸중"].append(c)
+                continue
+            # ------------------------------------------------
+
             tgt = find_target_row(name_m, assoc_m) or reg_find_label(name_m, assoc_m)
             if not tgt and any(k in tns for k in ("유사암","소액암","갑상선암","기타피부암","경계성종양","제자리암")) and product_has_cancer:
                 tgt = "유사암"
             if not tgt and ("암" in tns) and (("진단" in tns) or ("진단비" in tns)) and product_has_cancer:
                 tgt = "일반암/고액암 진단비"
-            if tgt: bucket[tgt].append(c);  continue
+            if tgt:
+                bucket[tgt].append(c)
+                continue
 
-        fb = find_target_row(name_m or name, assoc_m or assoc) or reg_find_label(name_m or name, assoc_m or assoc)
+
+        # 마지막 풀백
+        fb = find_target_row(name_m or name, assoc_m or assoc) or reg_find_label(
+            name_m or name, assoc_m or assoc
+        )
         if fb:
-            if fb == "유사암-갑,기,경,제": fb = "유사암"
-            if (fb in ("암주요치료비","항암방사선","약물 치료","암 입,통원일당","유사암","일반암/고액암 진단비", _CANCER_SURGERY_LABEL)) and (not product_has_cancer):
-                c["_reason"] = "UMAP/PRODUCT_NO_CANCER_SCOPE";  unmapped.append(c)
+            if fb == "유사암-갑,기,경,제":
+                fb = "유사암"
+            if (fb in ("암주요치료비","항암방사선","약물 치료","암 입,통원일당","유사암","일반암/고액암 진단비", _CANCER_SURGERY_LABEL)
+                    and (not product_has_cancer)):
+                c["_reason"] = "UMAP/PRODUCT_NO_CANCER_SCOPE"
+                unmapped.append(c)
             else:
                 bucket[fb].append(c)
             continue
 
         c["_reason"] = "UMAP/NORULE"
         hint = reg_find_label(name, assoc)
-        if hint: c["_hint"] = f"후보행:{hint}"
+        if hint:
+            c["_hint"] = f"후보행:{hint}"
         unmapped.append(c)
         _trace("UMAP_NORULE@covagg", f"name={name}, assoc={assoc}")
 
     # 유사암 세트 축소(세트/단일 각 1건만)
     def _shrink_pseudo(label: str):
         items = bucket.get(label, [])
-        if len(items) <= 2: return
+        if len(items) <= 2:
+            return
         SET_TOKENS = ("갑상선암","기타피부암","경계성종양","제자리암")
+
         def _is_set(x: Dict) -> bool:
             return any(k in _nosp(_nz(x.get("name",""))) for k in SET_TOKENS)
 
-        set_items   = [x for x in items if _is_set(x)]
-        single_items= [x for x in items if not _is_set(x)]
+        set_items    = [x for x in items if _is_set(x)]
+        single_items = [x for x in items if not _is_set(x)]
 
         def _pick_max(arr: List[Dict]) -> List[Dict]:
-            if not arr: return []
+            if not arr:
+                return []
             try:
                 amts = [(int(x.get("_amt", 0)), idx) for idx, x in enumerate(arr)]
                 keep_idx = max(amts, key=lambda t: t[0])[1]
@@ -738,7 +905,7 @@ def aggregate_coverages(product: dict) -> Tuple[Dict[str, List[Dict]], List[str]
 
         survivors = _pick_max(set_items) + _pick_max(single_items)
         survivors = [x for x in survivors if x]
-        drops = [x for x in items if x not in survivors]
+        drops     = [x for x in items if x not in survivors]
         for d in drops:
             d["_reason"] = "AGG/SET_MAX_ONLY"
             excluded_post.append(d)
@@ -748,11 +915,16 @@ def aggregate_coverages(product: dict) -> Tuple[Dict[str, List[Dict]], List[str]
 
     _trace("FLOW_SUMMARY@covagg", f"meta_seen={meta_seen}, meta_routed={meta_routed}, buckets={list(bucket.keys())}")
 
-    if excluded_post: _write(_EXCLUDED_LOG, excluded_post, product)
-    if unmapped: _write(_UNMAPPED_LOG, unmapped, product)
+    if excluded_post:
+        _write(_EXCLUDED_LOG, excluded_post, product)
+    if unmapped:
+        _write(_UNMAPPED_LOG, unmapped, product)
 
-    return bucket, [f"{_nz(x.get('name'))}|{_nz(x.get('association_name'))}|{_nz(x.get('amount'))}" for x in unmapped], \
-           [f"{_nz(x.get('name'))}|{_nz(x.get('association_name'))}" for x in (excluded + excluded_post)]
+    return (
+        bucket,
+        [f"{_nz(x.get('name'))}|{_nz(x.get('association_name'))}|{_nz(x.get('amount'))}" for x in unmapped],
+        [f"{_nz(x.get('name'))}|{_nz(x.get('association_name'))}" for x in (excluded + excluded_post)],
+    )
 
 # ============================================================
 # [섹션 G] 라벨 별칭 → 템플릿 키로 보정
@@ -801,8 +973,10 @@ def _max_amt(items: List[Dict]) -> int:
     m = 0
     for i in items or []:
         v = i.get("_amt") or 0
-        if v > m: m = v
+        if v > m:
+            m = v
     return m
+
 
 def process_coverages(product: dict) -> Tuple[Dict[str, str], List[str], List[str]]:
     bucket, umap, excl = aggregate_coverages(product)
@@ -812,11 +986,14 @@ def process_coverages(product: dict) -> Tuple[Dict[str, str], List[str], List[st
     for key in ["질병사망","질병후유장해","상해사망","상해후유장해"]:
         if key in bucket:
             v = _max_amt(bucket[key])
-            if v: out[key] = f"{key} {format_amount_short(v)}"
+            if v:
+                out[key] = f"{key} {format_amount_short(v)}"
 
     # 간병
-    try: nursing_aggregate(bucket, out)
-    except Exception: pass
+    try:
+        nursing_aggregate(bucket, out)
+    except Exception:
+        pass
 
     # ICU
     try:
@@ -834,24 +1011,36 @@ def process_coverages(product: dict) -> Tuple[Dict[str, str], List[str], List[st
         pass
 
     # 수술
-    try: surg_aggregate(bucket, out)
-    except Exception: pass
+    try:
+        surg_aggregate(bucket, out)
+    except Exception:
+        pass
 
     # 운전자/치매/후유 훅
-    try: _death_override(bucket, out, scope=None)
-    except Exception: pass
-    try: dem_aggregate(bucket, out, scope={"product_has_cancer": None})
-    except Exception: pass
-    try: drv_aggregate(bucket, out, scope={"product_has_cancer": None})
-    except Exception: pass
+    try:
+        _death_override(bucket, out, scope=None)
+    except Exception:
+        pass
+    try:
+        dem_aggregate(bucket, out, scope={"product_has_cancer": None})
+    except Exception:
+        pass
+    try:
+        drv_aggregate(bucket, out, scope={"product_has_cancer": None})
+    except Exception:
+        pass
 
     # 골절·화상·배상·벌금
-    try: fxburn_aggregate(bucket, out)
-    except Exception: pass
+    try:
+        fxburn_aggregate(bucket, out)
+    except Exception:
+        pass
 
     # 치아
-    try: dental_aggregate(bucket, out)
-    except Exception: pass
+    try:
+        dental_aggregate(bucket, out)
+    except Exception:
+        pass
 
     # 실손
     try:
@@ -863,15 +1052,22 @@ def process_coverages(product: dict) -> Tuple[Dict[str, str], List[str], List[st
 
     # 암
     try:
-        _trace("CANCER_CALL@proc", f"IC={len(bucket.get('__INTEGRATED_CANCER__', []))}, IM={len(bucket.get('__INTEGRATED_META__', []))}, out_pre={list(out.keys())}")
+        _trace(
+            "CANCER_CALL@proc",
+            f"IC={len(bucket.get('__INTEGRATED_CANCER__', []))}, "
+            f"IM={len(bucket.get('__INTEGRATED_META__', []))}, "
+            f"out_pre={list(out.keys())}",
+        )
         cancer_aggregate(bucket, out)
         _trace("CANCER_RET@proc", f"out_post={list(out.keys())}")
     except Exception as e:
         _trace("CANCER_ERR@proc", f"{type(e).__name__}: {e}")
 
     # HEART 보정
-    try: _heart_override(bucket, out)
-    except Exception: pass
+    try:
+        _heart_override(bucket, out)
+    except Exception:
+        pass
 
     # 세트 잔여 드롭 재로그
     try:
@@ -893,7 +1089,8 @@ def process_coverages(product: dict) -> Tuple[Dict[str, str], List[str], List[st
             suspects = []
             for k in _icu_keys:
                 for c in bucket.get(k, []):
-                    cc = dict(c); cc["_reason"] = "UMAP/ICU_OUTPUT_MISSING"
+                    cc = dict(c)
+                    cc["_reason"] = "UMAP/ICU_OUTPUT_MISSING"
                     suspects.append(cc)
             if suspects:
                 _write(_UNMAPPED_LOG, suspects, product)
@@ -907,15 +1104,23 @@ def process_coverages(product: dict) -> Tuple[Dict[str, str], List[str], List[st
             if re.search(r"(비\s*갱신형|갱신.{0,6}(보험료|납입|면제|대체))", s):
                 return False
             return any(k in s for k in ("갱신","갱신형","자동갱신"))
-        row_flags = {}
+
+        row_flags: Dict[int, List[bool]] = {}
         for label, items in bucket.items():
             row = config.HARDCODED_ROW_MAP.get(label)
-            if not row: continue
+            if not row:
+                continue
             flags = row_flags.setdefault(int(row), [])
             for c in items:
                 flags.append(_is_renewal_line(c.get("name",""), c.get("association_name","")))
         out["_ROW_RENEWAL_ALL"] = sorted([r for r, fs in row_flags.items() if fs and all(fs)])
         out["_ROW_RENEWAL_ANY"] = sorted([r for r, fs in row_flags.items() if any(fs)])
+    except Exception:
+        pass
+
+    # CI 태그 적용 (rules.ci)
+    try:
+        apply_ci_tag(bucket, out)
     except Exception:
         pass
 
